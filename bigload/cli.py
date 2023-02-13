@@ -7,7 +7,7 @@ import urllib.request
 import click
 from click_help_colors import HelpColorsGroup
 
-from . import airbyte_source
+from . import sources
 
 
 def print_color(msg):
@@ -53,7 +53,7 @@ def install_connectors(source, destination):
     if not source:
         handle_error('--source argument must be specified.\n\n' + install.__doc__)
     print_info(f'Downloading Source Airbyte Connector `{source}` from Github')
-    source = airbyte_source.AirbyteSource(source)
+    source = sources.AirbyteSource(source)
     source.download_source_code_from_github()
     requirements = (
         source.python_requirements +
@@ -76,5 +76,5 @@ def list_source_connectors():
     '''
     List Airbyte Source Python Connectors
     '''
-    print('\n'.join(sorted(airbyte_source.get_python_airbyte_source_connectors())))
+    print('\n'.join(sorted(sources.get_python_airbyte_source_connectors())))
 
