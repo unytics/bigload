@@ -1,42 +1,15 @@
-import re
-import io
 import os
-import shutil
-import zipfile
 import json
-import sys
 import importlib
 import tempfile
-import distutils
-import urllib.request
 import platform
 
+import airbyte_cdk.entrypoint
 
-AIRBYTE_ARCHIVE = None
-
-
-def download_airbyte_code_from_github(branch_or_release='master'):
-    global AIRBYTE_ARCHIVE
-    if AIRBYTE_ARCHIVE is None:
-        url = f'https://github.com/airbytehq/airbyte/zipball/{branch_or_release}'
-        resp = urllib.request.urlopen(url)
-        AIRBYTE_ARCHIVE = zipfile.ZipFile(io.BytesIO(resp.read()))
-    return AIRBYTE_ARCHIVE
-
-
-def get_python_airbyte_source_connectors(branch_or_release='master'):
-    airbyte_archive = download_airbyte_code_from_github(branch_or_release=branch_or_release)
-    pattern = r'airbyte-integrations/connectors/source-([\w-]+)/setup.py'
-    return [
-        'source-' + re.findall(pattern, path)[0]
-        for path in airbyte_archive.namelist()
-        if re.findall(pattern, path)
-    ]
 
 
 class AirbyteSource:
 
-    base_code_folder = 'airbyte_connectors'
     base_config_folder = 'airbyte_connectors_config'
 
     def __init__(self, name):
@@ -45,17 +18,12 @@ class AirbyteSource:
         self._entrypoint = None
 
     @property
-    def code_folder(self):
-        return f'{self.base_code_folder}/{self.name}'
-
-    @property
     def config_filename(self):
         return f'{self.base_config_folder}/{self.name}.yaml'
 
     @property
     def source(self):
         if self._source is None:
-            sys.path.insert(1, self.code_folder)
             package_name = self.name.replace("-", "_")
             package = importlib.import_module(package_name)
             class_name = self.name.replace('-', ' ').title().replace(' ', '')
@@ -64,13 +32,8 @@ class AirbyteSource:
         return self._source
 
     @property
-    def connection_spec(self):
-        return self.spec['connectionSpecification']
-
-    @property
     def entrypoint(self):
         if self._entrypoint is None:
-            import airbyte_cdk.entrypoint
             self._entrypoint = airbyte_cdk.entrypoint.AirbyteEntrypoint(self.source)
         return self._entrypoint
 
@@ -80,13 +43,6 @@ class AirbyteSource:
         import yaml
         config = yaml.load(open(self.config_filename, encoding='utf-8'), Loader=yaml.loader.SafeLoader)
         return config['configuration']
-
-    def generate_config_sample(self):
-        from . import airbyte_utils
-        with open(self.config_filename, 'w') as out:
-            config = airbyte_utils.generate_connection_yaml_config_sample(self.spec)
-            out.write(config)
-        return self.config_filename
 
     @property
     def spec(self):
@@ -159,24 +115,6 @@ class AirbyteSource:
             # Fix NamedTempFile problem on windows
             import source_surveymonkey.streams
             source_surveymonkey.streams.cache_file = tempfile.NamedTemporaryFile(delete=False)
-
-    def download_source_code_from_github(self, branch_or_release='master', force=False):
-        airbyte_archive = download_airbyte_code_from_github(branch_or_release)
-        connector_path = f'airbyte-integrations/connectors/{self.name}/'
-        connector_folder = next(path for path in airbyte_archive.namelist() if path.endswith(connector_path))
-        connector_files = [path for path in airbyte_archive.namelist() if connector_folder in path]
-        with tempfile.TemporaryDirectory() as tmpdirname:
-            airbyte_archive.extractall(tmpdirname, members=connector_files)
-            if os.path.exists(self.code_folder):
-                shutil.rmtree(self.code_folder)
-            shutil.move(f'{tmpdirname}/{connector_folder}', self.code_folder)
-
-    @property
-    def python_requirements(self):
-        py_setup_file = f'{self.code_folder}/setup.py'
-        setup = distutils.core.run_setup(py_setup_file, stop_after='init')
-        return setup.install_requires
-
 
 
 # source_name = 'source-surveymonkey'

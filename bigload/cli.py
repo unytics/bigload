@@ -1,74 +1,76 @@
-import json
 import os
-import sys
-import urllib.request
-
+import venv
+import shutil
+import platform
+import pathlib
 
 import click
-from click_help_colors import HelpColorsGroup
+import click_help_colors
 
-from . import sources
+from . import install as _install
 
 
-def print_color(msg):
-    click.echo(click.style(msg, fg='cyan'))
+class Configuration:
 
-def print_success(msg):
-    click.echo(click.style(f'SUCCESS: {msg}', fg='green'))
-
-def print_info(msg):
-    click.echo(click.style(f'INFO: {msg}', fg='yellow'))
-
-def print_command(msg):
-    click.echo(click.style(f'INFO: `{msg}`', fg='magenta'))
-
-def print_warning(msg):
-    click.echo(click.style(f'WARNING: {msg}', fg='cyan'))
-
-def handle_error(msg):
-    click.echo(click.style(f'ERROR: {msg}', fg='red'))
-    sys.exit()
+    def __init__(self, airbyte_source, airbyte_release, destination):
+        self.airbyte_source = airbyte_source
+        self.airbyte_release = airbyte_release
+        self.destination = destination
+        self.name = f'{airbyte_source}__{airbyte_release}__to__{destination}'
+        self.virtual_env_folder = f'.venv/{self.name}'
+        self.python_folder = {'Linux': 'bin', 'Darwin': 'bin', 'Windows': 'Scripts'}[platform.system()]
+        self.python_exe = str(pathlib.Path(f'{self.virtual_env_folder}/{self.python_folder}/python'))
 
 
 @click.group(
-    cls=HelpColorsGroup,
+    cls=click_help_colors.HelpColorsGroup,
     help_headers_color='yellow',
     help_options_color='cyan'
 )
+
+
 def cli():
     pass
 
 
 @cli.command()
-@click.argument('source')  #, help='Airbyte Source Python Connector (to get the list of connectors run `bigload list-source-connectors`)')
-@click.argument('destination')  #, default='bigquery', help='Destination among [bigquery]. Defaults to bigquery')
-def install_connectors(source, destination):
+@click.argument('airbyte_source')
+@click.option('--airbyte_release', default='v0.40.30', help='defaults to `v0.40.30` (explore airbyte releases at https://github.com/airbytehq/airbyte/releases)')
+@click.option('--destination', default='bigquery', help='defaults to `bigquery` (only bigquery is supported for now)')
+def install(airbyte_source, airbyte_release, destination):
     '''
-    Install SOURCE and DESTINATION
+    Install source and destination connectors in a new python virtual environment
 
-        - SOURCE: one of python airbyte sources returned by command `bigload list-source-connectors`
+    > AIRBYTE_SOURCE: one of python airbyte sources returned by command `bigload list-source-connectors`
 
-        - DESTINATION: for now, only bigquery is accepted as DESTINATION
+    > --destination: for now, only bigquery is supported
     '''
-    if not source:
-        handle_error('--source argument must be specified.\n\n' + install.__doc__)
-    print_info(f'Downloading Source Airbyte Connector `{source}` from Github')
-    source = sources.AirbyteSource(source)
-    source.download_source_code_from_github()
-    requirements = (
-        source.python_requirements +
-        ['google-cloud-bigquery']
-    )
-    print_info('Installing python requirements using:')
-    command = 'pip install ' + " ".join([f'"{r}"' for r in requirements])
-    print_command(command)
-    result = os.system(command)
-    if result != 0:
-        handle_error('Could not install paclages')
-    print_info('Generating Source Connector Config file')
-    config_filename = source.generate_config_sample()
-    print_success(f'Install run successfully. Edit generated config file `{config_filename}` before running `bigload run`')
+    conf = Configuration(airbyte_source, airbyte_release, destination)
 
+    _install.print_info(f'Creating virtual env at {conf.virtual_env_folder}')
+    if os.path.exists(conf.virtual_env_folder):
+        shutil.rmtree(conf.virtual_env_folder)
+    venv.create(conf.virtual_env_folder, with_pip=True)
+
+    _install.install(airbyte_source, airbyte_release, destination, python_exe=conf.python_exe)
+
+    _install.generate_airbyte_source_config_sample(airbyte_source, python_exe=conf.python_exe)
+
+
+
+# @cli.command()
+# @click.argument('airbyte_source')
+# @click.option('--airbyte_release', default='v0.40.30', help='defaults to `v0.40.30` (explore airbyte releases at https://github.com/airbytehq/airbyte/releases)')
+# @click.option('--destination', default='bigquery', help='defaults to `bigquery` (only bigquery is supported for now)')
+# def run(airbyte_source, airbyte_release, destination):
+#     virtualenv_folder = f'.venv/{airbyte_source}_{airbyte_release}__to__{destination}'
+#     python_folder = {'Linux': 'bin', 'Darwin': 'bin', 'Windows': 'Scripts'}[platform.system()]
+#     python_exe = str(pathlib.Path(f'{virtualenv_folder}/{python_folder}/python'))
+
+#     script = __file__.replace('cli.py', '') + 'bla.py'
+#     print_info('Generating Source Connector Config file')
+#     command = f'{python_exe} {script} spec'
+#     os.system(command)
 
 
 @cli.command()
@@ -76,5 +78,5 @@ def list_source_connectors():
     '''
     List Airbyte Source Python Connectors
     '''
-    print('\n'.join(sorted(sources.get_python_airbyte_source_connectors())))
+    print('\n'.join(sorted(install.list_python_airbyte_sources())))
 
