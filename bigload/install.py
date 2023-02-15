@@ -85,6 +85,11 @@ def install_destination(destination, python_exe=None):
         handle_error('Could not install airbyte_source')
 
 
+def install(airbyte_source, airbyte_release, destination, python_exe=None):
+    install_airbyte_source(airbyte_source, branch_or_release=airbyte_release, python_exe=python_exe)
+    install_destination(destination, python_exe=python_exe)
+
+
 def generate_airbyte_source_config_sample(airbyte_source, python_exe=None):
     python_exe = python_exe or 'python'
 
@@ -100,8 +105,3 @@ def generate_airbyte_source_config_sample(airbyte_source, python_exe=None):
     print(spec)
 
     print(airbyte_utils.generate_connection_yaml_config_sample(spec))
-
-
-def install(airbyte_source, airbyte_release, destination, python_exe=None):
-    install_airbyte_source(airbyte_source, branch_or_release=airbyte_release, python_exe=python_exe)
-    install_destination(destination, python_exe=python_exe)
