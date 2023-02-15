@@ -10,16 +10,11 @@ import airbyte_cdk.entrypoint
 
 class AirbyteSource:
 
-    base_config_folder = 'airbyte_connectors_config'
-
-    def __init__(self, name):
+    def __init__(self, name, config):
         self.name = name
         self._source = None
         self._entrypoint = None
-
-    @property
-    def config_filename(self):
-        return f'{self.base_config_folder}/{self.name}.yaml'
+        self.config = config
 
     @property
     def source(self):
@@ -36,13 +31,6 @@ class AirbyteSource:
         if self._entrypoint is None:
             self._entrypoint = airbyte_cdk.entrypoint.AirbyteEntrypoint(self.source)
         return self._entrypoint
-
-    @property
-    def config(self):
-        assert os.path.exists(self.config_filename), 'No config file present, generate one!'
-        import yaml
-        config = yaml.load(open(self.config_filename, encoding='utf-8'), Loader=yaml.loader.SafeLoader)
-        return config['configuration']
 
     @property
     def spec(self):
@@ -117,19 +105,16 @@ class AirbyteSource:
             source_surveymonkey.streams.cache_file = tempfile.NamedTemporaryFile(delete=False)
 
 
-# source_name = 'source-surveymonkey'
+if __name__ == '__main__':
 
-# source = AirbyteSource(source_name)
-# source.generate_config_sample()
+    source_name = 'source-surveymonkey'
 
-# print(get_python_airbyte_source_connectors())
+    config_filename = 'bigloads/source-surveymonkey__v0.40.30__to__bigquery.yaml'
+    assert os.path.exists(config_filename), 'No config file present, generate one!'
+    import yaml
+    config = yaml.load(open(config_filename, encoding='utf-8'), Loader=yaml.loader.SafeLoader)
+    source_config = config['configuration']
 
-
-# print(source.catalog)
-
-# source.download_source_code_from_github()
-# source.install()
-
-# # print(source.spec)
-# print(source.sample_config)
-# source.read()
+    source = AirbyteSource(source_name, source_config)
+    # print(source.catalog)
+    source.read()

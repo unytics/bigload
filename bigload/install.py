@@ -104,4 +104,4 @@ def generate_airbyte_source_config_sample(airbyte_source, python_exe=None):
     spec = json.loads(spec.decode())
     print(spec)
 
-    print(airbyte_utils.generate_connection_yaml_config_sample(spec))
+    return airbyte_utils.generate_connection_yaml_config_sample(spec)

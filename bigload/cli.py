@@ -58,19 +58,17 @@ def install(airbyte_source, airbyte_release, destination):
 
 
 
-# @cli.command()
-# @click.argument('airbyte_source')
-# @click.option('--airbyte_release', default='v0.40.30', help='defaults to `v0.40.30` (explore airbyte releases at https://github.com/airbytehq/airbyte/releases)')
-# @click.option('--destination', default='bigquery', help='defaults to `bigquery` (only bigquery is supported for now)')
-# def run(airbyte_source, airbyte_release, destination):
-#     virtualenv_folder = f'.venv/{airbyte_source}_{airbyte_release}__to__{destination}'
-#     python_folder = {'Linux': 'bin', 'Darwin': 'bin', 'Windows': 'Scripts'}[platform.system()]
-#     python_exe = str(pathlib.Path(f'{virtualenv_folder}/{python_folder}/python'))
-
-#     script = __file__.replace('cli.py', '') + 'bla.py'
-#     print_info('Generating Source Connector Config file')
-#     command = f'{python_exe} {script} spec'
-#     os.system(command)
+@cli.command()
+@click.argument('airbyte_source')
+@click.option('--airbyte_release', default='v0.40.30', help='defaults to `v0.40.30` (explore airbyte releases at https://github.com/airbytehq/airbyte/releases)')
+@click.option('--destination', default='bigquery', help='defaults to `bigquery` (only bigquery is supported for now)')
+def run(airbyte_source, airbyte_release, destination):
+    conf = Configuration(airbyte_source, airbyte_release, destination)
+    script = __file__.replace('cli.py', '') + 'main.py'
+    command = f'{conf.python_exe} {script}'
+    _install.print_info('Starting extract-load job')
+    _install.print_command(command)
+    os.system(command)
 
 
 @cli.command()
