@@ -55,6 +55,15 @@ def list_python_airbyte_sources(branch_or_release='master'):
     ]
 
 
+def check_airbyte_source_exists_and_is_a_python_connector(airbyte_source, branch_or_release='master'):
+    url = f'https://api.github.com/repos/airbytehq/airbyte/contents/airbyte-integrations/connectors/{airbyte_source}/setup.py'
+    try:
+        urllib.request.urlopen(url)
+    except:
+        handle_error(f'Airbyte source `{airbyte_source}` could not be found on Airbyte GitHub repo for release {branch_or_release}. To get the full list of available airbyte sources please run `bigloader list-source-connectors`')
+    return True
+
+
 def install_airbyte_source(airbyte_source, branch_or_release='master', python_exe=None):
     print_info(f'Downloading airbyte_source code from GitHub')
     airbyte_archive = download_airbyte_code_from_github(branch_or_release)
