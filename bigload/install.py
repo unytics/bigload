@@ -26,7 +26,7 @@ def print_info(msg):
     click.echo(click.style(f'INFO: {msg}', fg='yellow'))
 
 def print_command(msg):
-    click.echo(click.style(f'INFO: `{msg}`', fg='magenta'))
+    click.echo(click.style(f'RUNNING: `{msg}`', fg='magenta'))
 
 def print_warning(msg):
     click.echo(click.style(f'WARNING: {msg}', fg='cyan'))

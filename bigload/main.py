@@ -7,7 +7,6 @@ import platform
 import airbyte_cdk.entrypoint
 
 
-
 class AirbyteSource:
 
     def __init__(self, name, config):
@@ -107,14 +106,22 @@ class AirbyteSource:
 
 if __name__ == '__main__':
 
-    source_name = 'source-surveymonkey'
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog='bigloader job runner',
+        description='Run extract-load job Run Extract-Load job from `airbyte_source` (of `airbyte_release`) to `destination` as defined in `config_filename`',
+    )
+    parser.add_argument('config_filename')
+    args = parser.parse_args()
+    config_filename = args.config_filename
 
-    config_filename = 'bigloads/source-surveymonkey__v0.40.30__to__bigquery.yaml'
-    assert os.path.exists(config_filename), 'No config file present, generate one!'
+    assert os.path.exists(config_filename), f'Config file {config_file} does not exist. Please create one!'
+
     import yaml
     config = yaml.load(open(config_filename, encoding='utf-8'), Loader=yaml.loader.SafeLoader)
     source_config = config['configuration']
 
+    source_name = config_filename.replace('\\', '/').split('/')[-1].split('__')[0]
     source = AirbyteSource(source_name, source_config)
     # print(source.catalog)
     source.read()

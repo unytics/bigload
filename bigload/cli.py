@@ -9,7 +9,7 @@ import click_help_colors
 
 from . import install as _install
 
-CONFIGURATION_FOLDER = 'bigloader'
+CONFIGURATION_FOLDER = 'extract_load_jobs'
 
 
 class Configuration:
@@ -24,7 +24,12 @@ class Configuration:
         self.python_exe = str(pathlib.Path(f'{self.virtual_env_folder}/{self.python_folder}/python'))
         self.config_folder = CONFIGURATION_FOLDER
         self.config_filename = f'{self.config_folder}/{self.name}.yaml'
-        self.run_job_command = self.python_exe + ' ' + __file__.replace('cli.py', 'main.py')
+        self.run_job_command = ' '.join([
+            self.python_exe,
+            __file__.replace('cli.py', 'main.py'),
+            self.config_filename
+        ])
+
 
 
 def create_virtual_env(virtual_env_folder):
@@ -57,7 +62,7 @@ def run(airbyte_source, airbyte_release, destination):
 
     1. Create a virtual environment where `airbyte_source` and `destination` python packages will be installed.
 
-    2. Generate an extract_load config file sample that you will update with desired configuration
+    2. Generate an extract-load config file sample that you will then update with desired configuration
 
     3. Launch the extract-load job in the virtual environement using the config file.
 
@@ -91,12 +96,14 @@ def run(airbyte_source, airbyte_release, destination):
         with open(conf.config_filename, 'w', encoding='utf-8') as out:
             out.write(config)
         _install.print_success(f'Config file as been successfully written at `{conf.config_filename}`')
-        _install.print_info('PLEASE make desired changes to these before continuing')
+        _install.print_info('PLEASE make desired changes to this file before continuing')
         click.confirm('Done? Do you want to continue?', abort=True)
 
     _install.print_info('Starting extract-load job')
     _install.print_command(conf.run_job_command)
-    os.system(conf.run_job_command)
+    result = os.system(conf.run_job_command)
+    if result != 0:
+        _install.handle_error('Could not successfully run extract-load job. Check logs above for details. It may be a configuration issue in your config file.')
     _install.print_success('All Good!')
 
 
