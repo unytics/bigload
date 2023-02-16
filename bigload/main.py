@@ -3,6 +3,7 @@ import json
 import importlib
 import tempfile
 import platform
+import datetime
 
 import airbyte_cdk.entrypoint
 
@@ -104,6 +105,49 @@ class AirbyteSource:
             source_surveymonkey.streams.cache_file = tempfile.NamedTemporaryFile(delete=False)
 
 
+class BigQueryDestination:
+
+    def __init__(self, config):
+        self.table = config['table']
+        import google.cloud.bigquery
+        self.bigquery = google.cloud.bigquery.Client()
+        self.bigquery.query(f'''
+            create table if not exists {self.table} (
+                timestamp timestamp,
+                type string,
+                stream string,
+                data string
+            )
+        ''').result()
+
+    def handle_messages(self, messages):
+        buffer = []
+        for message in messages:
+            message = json.loads(message)
+            if message['type'] == 'RECORD':
+                message = {
+                    'timestamp': datetime.datetime.utcnow().isoformat(),
+                    'type': message['type'],
+                    'data': json.dumps(message['record']['data']),
+                    'stream': message['record']['stream']
+                }
+                buffer.append(message)
+            elif message['type'] == 'STATE':
+                message = {
+                    'timestamp': datetime.datetime.utcnow().isoformat(),
+                    'type': message['type'],
+                    'data': json.dumps(message['state']),
+                    'stream': ''
+                }
+                buffer.append(message)
+                errors = self.bigquery.insert_rows_json(self.table, buffer)
+                if errors:
+                    raise ValueError(f'Could not insert rows to BigQuery table. Errors: {errors}')
+                buffer = []
+            else:
+                raise ValueError(f'unexpected message type {message["type"]}')
+
+
 if __name__ == '__main__':
 
     import argparse
@@ -119,9 +163,12 @@ if __name__ == '__main__':
 
     import yaml
     config = yaml.load(open(config_filename, encoding='utf-8'), Loader=yaml.loader.SafeLoader)
-    source_config = config['configuration']
 
+    destination_config = config['destination_configuration']
+    destination = BigQueryDestination(destination_config)
+
+    source_config = config['source_configuration']
     source_name = config_filename.replace('\\', '/').split('/')[-1].split('__')[0]
     source = AirbyteSource(source_name, source_config)
     # print(source.catalog)
-    source.read()
+    source.read(messages_handler=destination.handle_messages)
