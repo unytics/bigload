@@ -6,6 +6,7 @@ import platform
 import datetime
 
 import airbyte_cdk.entrypoint
+import airbyte_cdk.logger
 
 
 class AirbyteSource:
@@ -75,7 +76,7 @@ class AirbyteSource:
             value = [v for k, v in message.items() if k != 'type'][0]
             return value
 
-    def read(self, streams=None, messages_handler=None):
+    def read(self, streams=None, handle_messages=None):
         with tempfile.TemporaryDirectory() as temp_dir:
             args = ['read']
 
@@ -93,10 +94,7 @@ class AirbyteSource:
             self.fix_connector_issues()
             parsed_args = self.entrypoint.parse_args(args)
             messages = self.entrypoint.run(parsed_args)
-
-            if messages_handler is None:
-                messages_handler = lambda messages: [print(message) for message in messages]
-            messages_handler(messages)
+            handle_messages(messages)
 
     def fix_connector_issues(self):
         if self._source.name == 'SourceSurveymonkey' and platform.system() == 'Windows':
@@ -105,9 +103,23 @@ class AirbyteSource:
             source_surveymonkey.streams.cache_file = tempfile.NamedTemporaryFile(delete=False)
 
 
-class BigQueryDestination:
+class BaseDestination:
 
     def __init__(self, config):
+        https://stackoverflow.com/questions/6847862/how-to-change-the-format-of-logged-messages-temporarily-in-python
+        _log_formatter = airbyte_cdk.logger.AirbyteLogFormatter.format
+        def new_log_formatter(_self, record):
+            formatted_log = _log_formatter(_self, record)
+            self.handle_log_message(formatted_log)
+            return formatted_log
+        airbyte_cdk.logger.AirbyteLogFormatter.format = new_log_formatter
+
+
+class BigQueryDestination(BaseDestination):
+
+    def __init__(self, config):
+        job_id = uuid
+        start_date =
         self.table = config['table']
         import google.cloud.bigquery
         self.bigquery = google.cloud.bigquery.Client()
@@ -119,9 +131,12 @@ class BigQueryDestination:
                 data string
             )
         ''').result()
+        super().__init__(config)
+
 
     def handle_messages(self, messages):
         buffer = []
+        state_id = uuid
         for message in messages:
             message = json.loads(message)
             if message['type'] == 'RECORD':
@@ -137,7 +152,6 @@ class BigQueryDestination:
                     'timestamp': datetime.datetime.utcnow().isoformat(),
                     'type': message['type'],
                     'data': json.dumps(message['state']),
-                    'stream': ''
                 }
                 buffer.append(message)
                 errors = self.bigquery.insert_rows_json(self.table, buffer)
@@ -146,6 +160,19 @@ class BigQueryDestination:
                 buffer = []
             else:
                 raise ValueError(f'unexpected message type {message["type"]}')
+
+    def handle_log_message(self, message):
+        message = json.loads(message)
+        assert message['type'] == 'LOG', f'expecting LOG message type but got {message["type"]}'
+        message = {
+            'timestamp': datetime.datetime.utcnow().isoformat(),
+            'type': message['type'],
+            'data': json.dumps(message['log']),
+        }
+        errors = self.bigquery.insert_rows_json(self.table, [message])
+        if errors:
+            raise ValueError(f'Could not insert rows to BigQuery table. Errors: {errors}')
+
 
 
 if __name__ == '__main__':
@@ -171,4 +198,4 @@ if __name__ == '__main__':
     source_name = config_filename.replace('\\', '/').split('/')[-1].split('__')[0]
     source = AirbyteSource(source_name, source_config)
     # print(source.catalog)
-    source.read(messages_handler=destination.handle_messages)
+    source.read(handle_messages=destination.handle_messages)
