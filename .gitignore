@@ -1,4 +1,4 @@
 __pycache__/
 bigload.egg-info/
-bigloads/
+extract_load_jobs/
 .venv/
