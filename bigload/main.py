@@ -4,38 +4,55 @@ import importlib
 import tempfile
 import platform
 import datetime
+import logging
+import traceback
+import sys
+import uuid
+
 
 import airbyte_cdk.entrypoint
-import airbyte_cdk.logger
+import airbyte_cdk.utils.airbyte_secrets_utils
+
+
+def get_logger(log_message, secrets):
+    '''
+    Returns a logger which:
+    - remove any secret from message
+    - call `log_message` function for each log message
+    '''
+    class LogFormatter(logging.Formatter):
+        def format(_self, record):
+            message = super().format(record)
+            for secret in secrets:
+                if secret:
+                    message = message.replace(str(secret), "****")
+            log_message(record.levelname, message)
+            return message
+
+    logger = logging.getLogger(str(uuid.uuid4()))
+    logger_handler = logging.StreamHandler()
+    logger.addHandler(logger_handler)
+    logger.propagate = False
+    logger_handler.setFormatter(LogFormatter('%(message)s'))
+    return logger
+
 
 
 class AirbyteSource:
 
-    def __init__(self, name, config):
+    def __init__(self, name, config, handle_log_message=None):
         self.name = name
-        self._source = None
-        self._entrypoint = None
         self.config = config
-
-    @property
-    def source(self):
-        if self._source is None:
-            package_name = self.name.replace("-", "_")
-            package = importlib.import_module(package_name)
-            class_name = self.name.replace('-', ' ').title().replace(' ', '')
-            Source = getattr(package, class_name)
-            self._source = Source()
-        return self._source
-
-    @property
-    def entrypoint(self):
-        if self._entrypoint is None:
-            self._entrypoint = airbyte_cdk.entrypoint.AirbyteEntrypoint(self.source)
-        return self._entrypoint
-
-    @property
-    def spec(self):
-        return self.run('spec')
+        self.package_name = self.name.replace("-", "_")
+        self.package = importlib.import_module(self.package_name)
+        self.class_name = self.name.replace('-', ' ').title().replace(' ', '')
+        self.SourceClass = getattr(self.package, self.class_name)
+        self.source = self.SourceClass()
+        self.spec = self.source.spec(logging.getLogger())
+        self.entrypoint = airbyte_cdk.entrypoint.AirbyteEntrypoint(self.source)
+        if handle_log_message is not None:
+            config_secrets = airbyte_cdk.utils.airbyte_secrets_utils.get_secrets(self.spec.connectionSpecification, config)
+            self.entrypoint.logger = get_logger(handle_log_message, config_secrets)
 
     @property
     def catalog(self):
@@ -97,7 +114,7 @@ class AirbyteSource:
             handle_messages(messages)
 
     def fix_connector_issues(self):
-        if self._source.name == 'SourceSurveymonkey' and platform.system() == 'Windows':
+        if self.source.name == 'SourceSurveymonkey' and platform.system() == 'Windows':
             # Fix NamedTempFile problem on windows
             import source_surveymonkey.streams
             source_surveymonkey.streams.cache_file = tempfile.NamedTemporaryFile(delete=False)
@@ -106,51 +123,55 @@ class AirbyteSource:
 class BaseDestination:
 
     def __init__(self, config):
-        https://stackoverflow.com/questions/6847862/how-to-change-the-format-of-logged-messages-temporarily-in-python
-        _log_formatter = airbyte_cdk.logger.AirbyteLogFormatter.format
-        def new_log_formatter(_self, record):
-            formatted_log = _log_formatter(_self, record)
-            self.handle_log_message(formatted_log)
-            return formatted_log
-        airbyte_cdk.logger.AirbyteLogFormatter.format = new_log_formatter
+        self.config = config
+        self.job_started_at = datetime.datetime.utcnow().isoformat()
+        self.slice_started_at = None
 
+    def handle_log_message(self, level, message):
+        pass
 
 class BigQueryDestination(BaseDestination):
 
     def __init__(self, config):
-        job_id = uuid
-        start_date =
         self.table = config['table']
         import google.cloud.bigquery
         self.bigquery = google.cloud.bigquery.Client()
         self.bigquery.query(f'''
             create table if not exists {self.table} (
-                timestamp timestamp,
+                job_started_at timestamp,
+                slice_started_at timestamp,
+                inserted_at timestamp,
                 type string,
+                subtype string,
                 stream string,
                 data string
             )
         ''').result()
         super().__init__(config)
 
-
     def handle_messages(self, messages):
+        self.slice_started_at = datetime.datetime.utcnow().isoformat()
         buffer = []
-        state_id = uuid
         for message in messages:
             message = json.loads(message)
             if message['type'] == 'RECORD':
                 message = {
-                    'timestamp': datetime.datetime.utcnow().isoformat(),
+                    'inserted_at': datetime.datetime.utcnow().isoformat(),
+                    'job_started_at': self.job_started_at,
+                    'slice_started_at': self.slice_started_at,
                     'type': message['type'],
+                    'subtype': None,
                     'data': json.dumps(message['record']['data']),
                     'stream': message['record']['stream']
                 }
                 buffer.append(message)
             elif message['type'] == 'STATE':
                 message = {
-                    'timestamp': datetime.datetime.utcnow().isoformat(),
+                    'inserted_at': datetime.datetime.utcnow().isoformat(),
+                    'job_started_at': self.job_started_at,
+                    'slice_started_at': self.slice_started_at,
                     'type': message['type'],
+                    'subtype': message['state']['type'],
                     'data': json.dumps(message['state']),
                 }
                 buffer.append(message)
@@ -158,16 +179,18 @@ class BigQueryDestination(BaseDestination):
                 if errors:
                     raise ValueError(f'Could not insert rows to BigQuery table. Errors: {errors}')
                 buffer = []
+                self.slice_started_at = datetime.datetime.utcnow().isoformat()
             else:
                 raise ValueError(f'unexpected message type {message["type"]}')
 
-    def handle_log_message(self, message):
-        message = json.loads(message)
-        assert message['type'] == 'LOG', f'expecting LOG message type but got {message["type"]}'
+    def handle_log_message(self, level, message):
         message = {
-            'timestamp': datetime.datetime.utcnow().isoformat(),
-            'type': message['type'],
-            'data': json.dumps(message['log']),
+            'inserted_at': datetime.datetime.utcnow().isoformat(),
+            'job_started_at': self.job_started_at,
+            'slice_started_at': self.slice_started_at,
+            'type': 'LOG',
+            'subtype': level,
+            'data': message,
         }
         errors = self.bigquery.insert_rows_json(self.table, [message])
         if errors:
@@ -191,11 +214,15 @@ if __name__ == '__main__':
     import yaml
     config = yaml.load(open(config_filename, encoding='utf-8'), Loader=yaml.loader.SafeLoader)
 
+
     destination_config = config['destination_configuration']
     destination = BigQueryDestination(destination_config)
 
     source_config = config['source_configuration']
     source_name = config_filename.replace('\\', '/').split('/')[-1].split('__')[0]
-    source = AirbyteSource(source_name, source_config)
-    # print(source.catalog)
-    source.read(handle_messages=destination.handle_messages)
+    source = AirbyteSource(source_name, source_config, handle_log_message=destination.handle_log_message)
+    try:
+        source.read(handle_messages=destination.handle_messages)
+    except Exception:
+        source.entrypoint.logger.error(traceback.format_exc())
+        sys.exit(1)
