@@ -30,6 +30,7 @@ def get_logger(log_message, secrets):
             return message
 
     logger = logging.getLogger(str(uuid.uuid4()))
+    logger.setLevel('INFO')
     logger_handler = logging.StreamHandler()
     logger.addHandler(logger_handler)
     logger.propagate = False
@@ -93,20 +94,25 @@ class AirbyteSource:
             value = [v for k, v in message.items() if k != 'type'][0]
             return value
 
-    def read(self, streams=None, handle_messages=None):
+    def read(self, streams=None, handle_messages=None, state=None):
         with tempfile.TemporaryDirectory() as temp_dir:
             args = ['read']
 
-            config_filename = f'{temp_dir}/config.json'
-            json.dump(self.config, open(config_filename, 'w', encoding='utf-8'))
-            args += ['--config', config_filename]
+            filename = f'{temp_dir}/config.json'
+            json.dump(self.config, open(filename, 'w', encoding='utf-8'))
+            args += ['--config', filename]
 
             catalog = self.configured_catalog
             if streams is not None:
                 catalog['streams'] = [s for s in catalog['streams'] if s['stream']['name'] in streams]
-            catalog_filename = f'{temp_dir}/catalog.json'
-            json.dump(catalog, open(catalog_filename, 'w', encoding='utf-8'))
-            args += ['--catalog', catalog_filename]
+            filename = f'{temp_dir}/catalog.json'
+            json.dump(catalog, open(filename, 'w', encoding='utf-8'))
+            args += ['--catalog', filename]
+
+            if state:
+                filename = f'{temp_dir}/state.json'
+                json.dump(state, open(filename, 'w', encoding='utf-8'))
+                args += ['--state', filename]
 
             self.fix_connector_issues()
             parsed_args = self.entrypoint.parse_args(args)
@@ -127,8 +133,16 @@ class BaseDestination:
         self.job_started_at = datetime.datetime.utcnow().isoformat()
         self.slice_started_at = None
 
+    def handle_messages(self, messages):
+        for message in messages:
+            print(message)
+
     def handle_log_message(self, level, message):
         pass
+
+    def get_state(self):
+        return {}
+
 
 class BigQueryDestination(BaseDestination):
 
@@ -196,6 +210,16 @@ class BigQueryDestination(BaseDestination):
         if errors:
             raise ValueError(f'Could not insert rows to BigQuery table. Errors: {errors}')
 
+    def get_state(self):
+        rows = self.bigquery.query(f'''
+        select json_extract(data, '$.data') as state
+        from {self.table}
+        where type = 'STATE'
+        order by inserted_at desc
+        limit 1
+        ''').result()
+        rows = list(rows)
+        return json.loads(rows[0].state) if rows else {}
 
 
 if __name__ == '__main__':
@@ -222,7 +246,9 @@ if __name__ == '__main__':
     source_name = config_filename.replace('\\', '/').split('/')[-1].split('__')[0]
     source = AirbyteSource(source_name, source_config, handle_log_message=destination.handle_log_message)
     try:
-        source.read(handle_messages=destination.handle_messages)
+        state = destination.get_state()
+        source.entrypoint.logger.info('Starting to read from state:\n' + json.dumps(state, indent=4))
+        source.read(handle_messages=destination.handle_messages, state=state)
     except Exception:
         source.entrypoint.logger.error(traceback.format_exc())
         sys.exit(1)
