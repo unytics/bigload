@@ -14,7 +14,7 @@ CONFIGURATION_FOLDER = 'extract_load_jobs'
 
 class Configuration:
 
-    def __init__(self, airbyte_source, airbyte_release, destination):
+    def __init__(self, airbyte_source, airbyte_release, destination, streams):
         self.airbyte_source = airbyte_source
         self.airbyte_release = airbyte_release
         self.destination = destination
@@ -27,7 +27,8 @@ class Configuration:
         self.run_job_command = ' '.join([
             self.python_exe,
             __file__.replace('cli.py', 'main.py'),
-            self.config_filename
+            self.config_filename,
+            f'--streams {streams}' if streams else ''
         ])
 
 
@@ -54,7 +55,8 @@ def cli():
 @click.argument('airbyte_source')
 @click.option('--airbyte_release', default='v0.40.30', help='defaults to `v0.40.30` (explore airbyte releases at https://github.com/airbytehq/airbyte/releases)')
 @click.option('--destination', default='bigquery', help='defaults to `bigquery` (only bigquery is supported for now)')
-def run(airbyte_source, airbyte_release, destination):
+@click.option('--streams', help='comma separated list of streams to extract')
+def run(airbyte_source, airbyte_release, destination, streams):
     '''
     Run Extract-Load job from `airbyte_source` (of `airbyte_release`) to `destination`
 
@@ -77,7 +79,7 @@ def run(airbyte_source, airbyte_release, destination):
 
     - `destination` must be one of [print, bigquery]. If you desire another destination, please file a GitHub issue.
     '''
-    conf = Configuration(airbyte_source, airbyte_release, destination)
+    conf = Configuration(airbyte_source, airbyte_release, destination, streams)
 
     if os.path.exists(conf.virtual_env_folder):
         _install.print_info(f'Using existing virtual env')
