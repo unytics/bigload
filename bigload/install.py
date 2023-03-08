@@ -97,7 +97,7 @@ def install_airbyte_source(airbyte_source, branch_or_release='master', python_ex
     with tempfile.TemporaryDirectory() as tmpdirname:
         airbyte_archive.extractall(tmpdirname, members=connector_files)
         python_exe = python_exe or 'python'
-        command = f'{python_exe} -m pip install {tmpdirname}/{connector_folder}'
+        command = f'{python_exe} -m pip install -e {tmpdirname}/{connector_folder}'
         print_info(f'Installing airbyte_source via pip')
         print_command(command)
         result = os.system(command)
