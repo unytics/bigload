@@ -1,3 +1,4 @@
+import shutil
 import re
 import io
 import zipfile
@@ -11,9 +12,6 @@ import json
 import click
 
 from . import airbyte_utils
-
-
-AIRBYTE_ARCHIVE = None
 
 
 def print_color(msg):
@@ -37,12 +35,9 @@ def handle_error(msg):
 
 
 def download_airbyte_code_from_github(branch_or_release='master'):
-    global AIRBYTE_ARCHIVE
-    if AIRBYTE_ARCHIVE is None:
-        url = f'https://github.com/airbytehq/airbyte/zipball/{branch_or_release}'
-        resp = urllib.request.urlopen(url)
-        AIRBYTE_ARCHIVE = zipfile.ZipFile(io.BytesIO(resp.read()))
-    return AIRBYTE_ARCHIVE
+    url = f'https://github.com/airbytehq/airbyte/zipball/{branch_or_release}'
+    resp = urllib.request.urlopen(url)
+    return zipfile.ZipFile(io.BytesIO(resp.read()))
 
 
 def list_python_airbyte_sources(branch_or_release='master'):
@@ -62,6 +57,35 @@ def check_airbyte_source_exists_and_is_a_python_connector(airbyte_source, branch
     except:
         handle_error(f'Airbyte source `{airbyte_source}` could not be found on Airbyte GitHub repo for release {branch_or_release}. To get the full list of available airbyte sources please run `bigloader list-source-connectors`')
     return True
+
+
+def download_airbyte_connector(airbyte_connector, destination_folder, branch_or_release='master'):
+    print_info(f'Downloading airbyte GitHub repo as a zip archive')
+    airbyte_archive = download_airbyte_code_from_github(branch_or_release)
+    connector_path = f'airbyte-integrations/connectors/{airbyte_connector}/'
+    connector_folder = next(path for path in airbyte_archive.namelist() if path.endswith(connector_path))
+    connector_files = [path for path in airbyte_archive.namelist() if connector_folder in path]
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        print_info('Extracting connector files from zip archive')
+        airbyte_archive.extractall(tmpdirname, members=connector_files)
+        print_info(f'Copying connector files into {destination_folder}')
+        if os.path.exists(destination_folder):
+            shutil.rmtree(destination_folder)
+        os.makedirs(destination_folder)
+        shutil.copytree(f'{tmpdirname}/{connector_folder}', destination_folder, dirs_exist_ok=True)
+    print_success(f'Successfully downloaded "{airbyte_connector}" airbyte connector into "{destination_folder}" folder')
+
+
+def install_python_package(folder, python_exe=None):
+    python_exe = python_exe or 'python'
+    command = f'{python_exe} -m pip install -e {folder}'
+    print_info(f'Installing python package located at {folder} via pip')
+    print_command(command)
+    result = os.system(command)
+    if result != 0:
+        handle_error('Could not install airbyte_source')
+    print_success(f'Successfully installed python package located at {folder}')
+
 
 
 def install_airbyte_source(airbyte_source, branch_or_release='master', python_exe=None):
@@ -101,7 +125,6 @@ def install(airbyte_source, airbyte_release, destination, python_exe=None):
 
 def generate_airbyte_source_config_sample(airbyte_source, python_exe=None):
     python_exe = python_exe or 'python'
-
     package_name = airbyte_source.replace("-", "_")
     class_name = airbyte_source.replace('-', ' ').title().replace(' ', '')
     python_command = '; '.join([
@@ -111,6 +134,4 @@ def generate_airbyte_source_config_sample(airbyte_source, python_exe=None):
     ])
     spec = subprocess.check_output([python_exe, '-c', python_command])
     spec = json.loads(spec.decode())
-    print(spec)
-
     return airbyte_utils.generate_connection_yaml_config_sample(spec)

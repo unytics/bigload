@@ -62,7 +62,8 @@ class AirbyteSource:
             {
                 "stream": stream,
                 "sync_mode": "incremental" if 'incremental' in stream['supported_sync_modes'] else 'full_refresh',
-                "destination_sync_mode": "append"
+                "destination_sync_mode": "append",
+                "cursor_field": stream.get('default_cursor_field', [])
             }
             for stream in catalog['streams']
         ]

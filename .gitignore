@@ -2,3 +2,4 @@ __pycache__/
 bigload.egg-info/
 extract_load_jobs/
 .venv/
+airbyte_connectors/
