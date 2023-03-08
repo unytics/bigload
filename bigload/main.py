@@ -153,86 +153,98 @@ class BaseDestination:
 
 class BigQueryDestination(BaseDestination):
 
-    def __init__(self, config, buffer_size_max=1000):
-        self.table = config['table']
+    def __init__(self, config, streams, buffer_size_max=1000):
         self.buffer_size_max = buffer_size_max
         import google.cloud.bigquery
         self.bigquery = google.cloud.bigquery.Client()
+        self.stream_table = lambda stream: config['table'].format(stream='_' + stream) if stream else None
+        self.logs_table = config['table'].format(stream='_logs')
+        self.states_table = config['table'].format(stream='_states')
+        print(streams)
+        for stream in streams:
+            self.bigquery.query(f'''
+                create table if not exists {self.stream_table(stream)} (
+                    job_started_at timestamp,
+                    slice_started_at timestamp,
+                    inserted_at timestamp,
+                    data string
+                )
+            ''').result()
         self.bigquery.query(f'''
-            create table if not exists {self.table} (
+            create table if not exists {self.logs_table} (
                 job_started_at timestamp,
                 slice_started_at timestamp,
                 inserted_at timestamp,
-                type string,
-                subtype string,
-                stream string,
+                level string,
                 data string
+            )
+        ''').result()
+        self.bigquery.query(f'''
+            create table if not exists {self.states_table} (
+                job_started_at timestamp,
+                slice_started_at timestamp,
+                inserted_at timestamp,
+                state string
             )
         ''').result()
         super().__init__(config)
 
+    def insert_rows(self, table, rows):
+        if not rows:
+            return
+        now  = datetime.datetime.utcnow().isoformat()
+        rows = [
+            {
+                **row,
+                **{
+                    'inserted_at': now,
+                    'job_started_at': self.job_started_at,
+                    'slice_started_at': self.slice_started_at,
+                }
+            }
+            for row in rows
+        ]
+        errors = self.bigquery.insert_rows_json(table, rows)
+        if errors:
+            raise ValueError(f'Could not insert rows to BigQuery table {table}. Errors: {errors}')
+
     def handle_messages(self, messages):
         self.slice_started_at = datetime.datetime.utcnow().isoformat()
         buffer = []
+        stream_table = None
         for message in messages:
             message = json.loads(message)
             if message['type'] == 'RECORD':
-                message = {
-                    'inserted_at': datetime.datetime.utcnow().isoformat(),
-                    'job_started_at': self.job_started_at,
-                    'slice_started_at': self.slice_started_at,
-                    'type': message['type'],
-                    'subtype': None,
-                    'data': json.dumps(message['record']['data']),
-                    'stream': message['record']['stream']
-                }
-                buffer.append(message)
+                new_stream_table = self.stream_table(message['record']['stream'])
+                if new_stream_table != stream_table:
+                    self.insert_rows(stream_table, buffer)
+                    buffer = []
+                    self.slice_started_at = datetime.datetime.utcnow().isoformat()
+                stream_table = new_stream_table
+                buffer.append({'data': json.dumps(message['record']['data'])})
+                if len(buffer) > self.buffer_size_max:
+                    self.insert_rows(stream_table, buffer)
+                    buffer = []
             elif message['type'] == 'STATE':
-                message = {
-                    'inserted_at': datetime.datetime.utcnow().isoformat(),
-                    'job_started_at': self.job_started_at,
-                    'slice_started_at': self.slice_started_at,
-                    'type': message['type'],
-                    'subtype': message['state']['type'],
-                    'data': json.dumps(message['state']),
-                }
-                buffer.append(message)
+                self.insert_rows(stream_table, buffer)
+                buffer = []
+                self.insert_rows(self.states_table, [{'state': json.dumps(message['state'])}])
+                self.slice_started_at = datetime.datetime.utcnow().isoformat()
             elif message['type'] == 'LOG':
                 level = logging.getLevelName(message['log']['level'])
                 message = message['log']['message']
                 logger.log(level, message)
             else:
-                raise ValueError(f'unexpected message type {message["type"]}')
-
-            if message['type'] == 'STATE' or len(buffer) > self.buffer_size_max:
-                errors = self.bigquery.insert_rows_json(self.table, buffer)
-                if errors:
-                    raise ValueError(f'Could not insert rows to BigQuery table. Errors: {errors}')
-                buffer = []
-                self.slice_started_at = datetime.datetime.utcnow().isoformat()
-        if buffer:
-            errors = self.bigquery.insert_rows_json(self.table, buffer)
-            if errors:
-                raise ValueError(f'Could not insert rows to BigQuery table. Errors: {errors}')
+                raise NotImplementedError(f'message type {message["type"]} is not managed yet')
+        self.insert_rows(stream_table, buffer)
 
     def handle_log_message(self, level, message):
-        message = {
-            'inserted_at': datetime.datetime.utcnow().isoformat(),
-            'job_started_at': self.job_started_at,
-            'slice_started_at': self.slice_started_at,
-            'type': 'LOG',
-            'subtype': level,
-            'data': message,
-        }
-        errors = self.bigquery.insert_rows_json(self.table, [message])
-        if errors:
-            raise ValueError(f'Could not insert rows to BigQuery table. Errors: {errors}')
+        self.insert_rows(self.logs_table, [{'level': level, 'data': message}])
 
     def get_state(self):
         rows = self.bigquery.query(f'''
-        select json_extract(data, '$.data') as state
-        from {self.table}
-        where type = 'STATE'
+        select json_extract(state, '$.data') as state
+        from {self.states_table}
         order by inserted_at desc
         limit 1
         ''').result()
@@ -241,10 +253,9 @@ class BigQueryDestination(BaseDestination):
 
 
 def run_extract_load(source_name, source_config, destination_config, streams=None):
-    destination = BigQueryDestination(destination_config)
-    patch_logger_to_send_logs_to_destination(destination)
-
     source = AirbyteSource(source_name, source_config)
+    destination = BigQueryDestination(destination_config, streams=streams or source.streams)
+    patch_logger_to_send_logs_to_destination(destination)
     state = destination.get_state()
     source.read(handle_messages=destination.handle_messages, state=state, streams=streams)
 
