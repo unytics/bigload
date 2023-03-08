@@ -240,13 +240,10 @@ class BigQueryDestination(BaseDestination):
         return json.loads(rows[0].state) if rows else {}
 
 
-def run_extract_load(config):
-    destination_config = config['destination_configuration']
+def run_extract_load(source_name, source_config, destination_config, streams=None):
     destination = BigQueryDestination(destination_config)
     patch_logger_to_send_logs_to_destination(destination)
 
-    source_config = config['source_configuration']
-    source_name = config_filename.replace('\\', '/').split('/')[-1].split('__')[0]
     source = AirbyteSource(source_name, source_config)
     state = destination.get_state()
     source.read(handle_messages=destination.handle_messages, state=state, streams=streams)
@@ -265,6 +262,9 @@ if __name__ == '__main__':
     config_filename = args.config_filename
     streams = args.streams.split(',') if args.streams else None
     assert os.path.exists(config_filename), f'Config file {config_filename} does not exist. Please create one!'
+    source_name = config_filename.replace('\\', '/').split('/')[-1].split('__')[0]
     config = yaml.load(open(config_filename, encoding='utf-8'), Loader=yaml.loader.SafeLoader)
-    run_extract_load(config)
+    source_config = config['source_configuration']
+    destination_config = config['destination_configuration']
+    run_extract_load(source_name, source_config, destination_config, streams)
 
