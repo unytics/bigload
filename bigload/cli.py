@@ -1,47 +1,14 @@
 import os
-import venv
-import shutil
-import platform
-import pathlib
+
+
 
 import click
 import click_help_colors
 
 from . import install as _install
+from .install import AirbyteConnector
 
-AIRBYTE_CONNECTORS_FOLDER = 'airbyte_connectors'
 CONFIGURATION_FOLDER = 'extract_load_jobs'
-
-
-def get_virtualenv_paths(name):
-    virtual_env_folder = f'.venv/{name}'
-    python_folder = {'Linux': 'bin', 'Darwin': 'bin', 'Windows': 'Scripts'}[platform.system()]
-    python_exe = str(pathlib.Path(f'{virtual_env_folder}/{python_folder}/python'))
-    return virtual_env_folder, python_exe
-
-class Configuration:
-
-    def __init__(self, airbyte_source, destination, streams):
-        self.airbyte_source = airbyte_source
-        self.destination = destination
-        self.name = f'{airbyte_source}__to__{destination}'
-        self.virtual_env_folder, self.python_exe = get_virtualenv_paths(airbyte_source)
-        self.config_folder = CONFIGURATION_FOLDER
-        self.config_filename = f'{self.config_folder}/{self.name}.yaml'
-        self.run_job_command = ' '.join([
-            self.python_exe,
-            __file__.replace('cli.py', 'main.py'),
-            self.config_filename,
-            f'--streams {streams}' if streams else ''
-        ])
-
-
-
-def create_virtual_env(virtual_env_folder):
-    _install.print_info(f'Creating virtual env at {virtual_env_folder}')
-    if os.path.exists(virtual_env_folder):
-        shutil.rmtree(virtual_env_folder)
-    venv.create(virtual_env_folder, with_pip=True)
 
 
 @click.group(
@@ -63,7 +30,7 @@ def download_source_connector(airbyte_connector, airbyte_release):
     Download `airbyte_connector` into *airbyte_connectors* folder
     `airbyte_connector` must be one of python airbyte sources returned by the commmand command `bigloader list-source-connectors`
     '''
-    _install.download_airbyte_connector(airbyte_connector, f'{AIRBYTE_CONNECTORS_FOLDER}/{airbyte_connector}', airbyte_release)
+    AirbyteConnector(airbyte_connector).download(airbyte_release=airbyte_release)
 
 
 @cli.command()
@@ -72,13 +39,8 @@ def install_source_connector(airbyte_connector):
     '''
     Install `airbyte_connector` located *airbyte_connectors* folder with pip
     '''
-    virtual_env_folder, python_exe = get_virtualenv_paths(airbyte_connector)
-    if os.path.exists(virtual_env_folder):
-        _install.print_info(f'Using existing virtual env')
-        _install.print_info(f'If you wish to reinstall it, remove the folder `{virtual_env_folder}` and restart this command')
-    else:
-        create_virtual_env(virtual_env_folder)
-        _install.install_python_package(f'{AIRBYTE_CONNECTORS_FOLDER}/{airbyte_connector}', python_exe=python_exe)
+    AirbyteConnector(airbyte_connector).install()
+
 
 
 @cli.command()
@@ -87,16 +49,8 @@ def spec(airbyte_connector):
     '''
     Install `airbyte_connector` located *airbyte_connectors* folder with pip
     '''
-    import subprocess
-    import json
-    _, python_exe = get_virtualenv_paths(airbyte_connector)
-    _install.print_info('Starting extract-load job')
-    command = f'{python_exe} {AIRBYTE_CONNECTORS_FOLDER}/{airbyte_connector}/main.py spec'
-    _install.print_command(command)
-    spec = subprocess.check_output(command, shell=True)
-    spec = json.loads(spec.decode())
-    print(json.dumps(spec, indent=4))
-    _install.print_success('All Good!')
+    AirbyteConnector(airbyte_connector).run('spec')
+
 
 
 
