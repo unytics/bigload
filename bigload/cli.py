@@ -1,11 +1,6 @@
-import os
-
-
-
 import click
 import click_help_colors
 
-from . import source
 from .source import AirbyteSource
 
 
