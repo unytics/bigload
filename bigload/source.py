@@ -90,7 +90,7 @@ def check_airbyte_source_exists_and_is_a_python_connector(airbyte_source, airbyt
     return True
 
 
-class AirbyteConnector:
+class AirbyteSource:
 
     def __init__(self, name):
         self.name = name
