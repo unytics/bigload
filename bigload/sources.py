@@ -130,16 +130,20 @@ class AirbyteSource:
             handle_error('Could not install package')
         print_success(f'Successfully installed python package located at {self.folder}')
 
-    def run(self, args, print_log=True):
+    def run(self, args, print_log=True, catalog=None):
         with tempfile.TemporaryDirectory() as temp_dir:
             command = f'{self.python_command} {args}'
             needs_config = 'spec' not in args
             if needs_config:
-                config_filename = f'{temp_dir}/config.json'
-                json.dump(self.config, open(config_filename, 'w', encoding='utf-8'))
-                command += f' --config {config_filename}'
-            process = subprocess.Popen(command, stdout=subprocess.PIPE)
-            for line in iter(process.stdout.readline, b""):
+                filename = f'{temp_dir}/config.json'
+                json.dump(self.config, open(filename, 'w', encoding='utf-8'))
+                command += f' --config {filename}'
+            if catalog:
+                filename = f'{temp_dir}/catalog.json'
+                json.dump(catalog, open(filename, 'w', encoding='utf-8'))
+                command += f' --catalog {filename}'
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, encoding='utf-8')
+            for line in iter(process.stdout.readline, ""):
                 message = airbyte_cdk.models.AirbyteMessage.parse_raw(line)
                 if (message.type == airbyte_cdk.models.Type.LOG) and print_log:
                     print_info(message.log.json(exclude_unset=True))
@@ -170,7 +174,7 @@ class AirbyteSource:
     def catalog(self):
         messages = self.run('discover')
         message = next(messages)
-        return message.catalog.dict(exclude_unset=True)
+        return json.loads(message.catalog.json(exclude_unset=True))
 
     @property
     def configured_catalog(self):
