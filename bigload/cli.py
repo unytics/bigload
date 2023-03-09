@@ -82,6 +82,25 @@ def install_source_connector(airbyte_connector):
 
 
 @cli.command()
+@click.argument('airbyte_connector')
+def spec(airbyte_connector):
+    '''
+    Install `airbyte_connector` located *airbyte_connectors* folder with pip
+    '''
+    import subprocess
+    import json
+    _, python_exe = get_virtualenv_paths(airbyte_connector)
+    _install.print_info('Starting extract-load job')
+    command = f'{python_exe} {AIRBYTE_CONNECTORS_FOLDER}/{airbyte_connector}/main.py spec'
+    _install.print_command(command)
+    spec = subprocess.check_output(command, shell=True)
+    spec = json.loads(spec.decode())
+    print(json.dumps(spec, indent=4))
+    _install.print_success('All Good!')
+
+
+
+@cli.command()
 @click.argument('airbyte_source')
 @click.option('--destination', default='bigquery', help='defaults to `bigquery` (only bigquery is supported for now)')
 @click.option('--streams', help='comma separated list of streams to extract')
