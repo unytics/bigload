@@ -15,6 +15,7 @@ import shutil
 
 import yaml
 import click
+import airbyte_cdk.models
 
 from . import airbyte_utils
 
@@ -50,6 +51,12 @@ def handle_error(msg):
     click.echo(click.style(f'ERROR: {msg}', fg='red'))
     sys.exit()
 
+
+def to_camelcase(snake_case_string):
+    return ''.join(
+        word.title() if k != 0 else word
+        for k, word in enumerate(snake_case_string.split('_'))
+    )
 
 def create_virtual_env(virtual_env_folder):
     print_info(f'Creating virtual env at {virtual_env_folder}')
@@ -123,37 +130,27 @@ class AirbyteConnector:
             handle_error('Could not install package')
         print_success(f'Successfully installed python package located at {self.folder}')
 
-    def run(self, args):
+    def run(self, args, print_log=True):
         with tempfile.TemporaryDirectory() as temp_dir:
             command = f'{self.python_command} {args}'
-            if 'spec' not in args:
+            needs_config = 'spec' not in args
+            if needs_config:
                 config_filename = f'{temp_dir}/config.json'
                 json.dump(self.config, open(config_filename, 'w', encoding='utf-8'))
                 command += f' --config {config_filename}'
-            print_command(command)
-            job = subprocess.run(command, stdout=subprocess.PIPE, shell=True)
-            if job.returncode != 0:
-                logs = [json.loads(log) for log in job.stdout.decode().split('\n') if log.startswith('{')]
-                trace_error = next((
-                    log.get('trace', {}).get('error', {})
-                    for log in logs
-                    if log.get('trace', {}).get('error', {})
-                ), {})
-                if trace_error.get('failure_type') == 'config_error':
-                    error_message = trace_error['message']
-                    error_message += '\n' + f'--> PLEASE UPDATE CONFIG FILE --> `{self.config_file}`'
-                    handle_error(error_message)
-                handle_error(logs[0])
-            message = json.loads(job.stdout.decode())
-            assert len(message.keys()) == 2, 'message should have only two keys, `type` and a second one'
-            key = [key for key in message.keys() if key != 'type'][0]
-            return message[key]
+            process = subprocess.Popen(command, stdout=subprocess.PIPE)
+            for line in iter(process.stdout.readline, b""):
+                message = airbyte_cdk.models.AirbyteMessage.parse_raw(line)
+                if (message.type == airbyte_cdk.models.Type.LOG) and print_log:
+                    print_info(message.log.json(exclude_unset=True))
+                elif message.type == airbyte_cdk.models.Type.TRACE:
+                    handle_error(message.trace.error.message)
+                else:
+                    yield message
 
     def init_config(self):
-        print_info('Getting airbyte connector spec')
-        spec = self.run('spec')
         print_info('Generating config file')
-        yaml_config = airbyte_utils.generate_connection_yaml_config_sample(spec)
+        yaml_config = airbyte_utils.generate_connection_yaml_config_sample(self.spec)
         with open(self.config_file, 'w', encoding='utf-8') as out:
             out.write(yaml_config)
         print_success(f'Config file as been successfully written at `{self.config_file}`')
@@ -161,15 +158,39 @@ class AirbyteConnector:
 
     @property
     def config(self):
-        if not os.path.exists(self.config_file):
-            print_info('Config file does not exist --> creating it')
-            self.init_config()
-        return yaml.load(open(self.config_file, encoding='utf-8'), Loader=yaml.loader.SafeLoader)
+        return yaml.load(open(self.config_file, encoding='utf-8'), Loader=yaml.loader.SafeLoader)['configuration']
 
     @property
     def spec(self):
-        return self.run('spec')
+        messages = self.run('spec')
+        message = next(messages)
+        return message.spec.dict(exclude_unset=True)
 
     @property
     def catalog(self):
-        return self.run('discover')
+        messages = self.run('discover')
+        message = next(messages)
+        return message.catalog.dict(exclude_unset=True)
+
+    @property
+    def configured_catalog(self):
+        catalog = self.catalog
+        catalog['streams'] = [
+            {
+                "stream": stream,
+                "sync_mode": "incremental" if 'incremental' in stream['supported_sync_modes'] else 'full_refresh',
+                "destination_sync_mode": "append",
+                "cursor_field": stream.get('default_cursor_field', [])
+            }
+            for stream in catalog['streams']
+        ]
+        return catalog
+
+    @property
+    def streams(self):
+        return [stream['name'] for stream in self.catalog['streams']]
+
+    def check(self):
+        messages = self.run('check')
+        message = next(messages)
+        return message.connectionStatus.dict(exclude_unset=True)

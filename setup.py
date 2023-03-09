@@ -11,6 +11,7 @@ setup(
         'click-help-colors',
         'jinja2',
         'pyyaml',
+        'airbyte-cdk',
     ],
     entry_points={
         'console_scripts': [

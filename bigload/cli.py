@@ -50,7 +50,7 @@ def spec(airbyte_connector):
     Install `airbyte_connector` located *airbyte_connectors* folder with pip
     '''
     # AirbyteConnector(airbyte_connector).init_config()
-    print(AirbyteConnector(airbyte_connector).spec)
+    print(AirbyteConnector(airbyte_connector).check())
 
 
 
