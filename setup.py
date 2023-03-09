@@ -10,6 +10,7 @@ setup(
         'click',
         'click-help-colors',
         'jinja2',
+        'pyyaml',
     ],
     entry_points={
         'console_scripts': [

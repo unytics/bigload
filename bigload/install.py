@@ -13,6 +13,7 @@ import pathlib
 import venv
 import shutil
 
+import yaml
 import click
 
 from . import airbyte_utils
@@ -90,6 +91,7 @@ class AirbyteConnector:
         self.virtualenv_folder = f'{VIRTUAL_ENVS_FOLDER}/{name}'
         self.python_exe = str(pathlib.Path(f'{self.virtualenv_folder}/{PYTHON_FOLDER}/python'))
         self.python_command = f'{self.python_exe} {self.folder}/main.py'
+        self.config_file = f'{self.folder}/bigloader_config.yaml'
 
     def download(self, airbyte_release='master'):
         print_info(f'Downloading airbyte GitHub repo as a zip archive')
@@ -107,7 +109,6 @@ class AirbyteConnector:
             shutil.copytree(f'{tmpdirname}/{connector_folder}', self.folder, dirs_exist_ok=True)
         print_success(f'Successfully downloaded "{self.name}" airbyte connector into "{self.folder}" folder')
 
-
     def install(self):
         if os.path.exists(self.virtualenv_folder):
             print_info(f'Airbyte connector is already installed')
@@ -123,24 +124,52 @@ class AirbyteConnector:
         print_success(f'Successfully installed python package located at {self.folder}')
 
     def run(self, args):
-        print_info('Starting extract-load job')
-        command = f'{self.python_command} {args}'
-        print_command(command)
-        spec = subprocess.check_output(command, shell=True)
-        spec = json.loads(spec.decode())
-        print(json.dumps(spec, indent=4))
-        print_success('All Good!')
+        with tempfile.TemporaryDirectory() as temp_dir:
+            command = f'{self.python_command} {args}'
+            if 'spec' not in args:
+                config_filename = f'{temp_dir}/config.json'
+                json.dump(self.config, open(config_filename, 'w', encoding='utf-8'))
+                command += f' --config {config_filename}'
+            print_command(command)
+            job = subprocess.run(command, stdout=subprocess.PIPE, shell=True)
+            if job.returncode != 0:
+                logs = [json.loads(log) for log in job.stdout.decode().split('\n') if log.startswith('{')]
+                trace_error = next((
+                    log.get('trace', {}).get('error', {})
+                    for log in logs
+                    if log.get('trace', {}).get('error', {})
+                ), {})
+                if trace_error.get('failure_type') == 'config_error':
+                    error_message = trace_error['message']
+                    error_message += '\n' + f'--> PLEASE UPDATE CONFIG FILE --> `{self.config_file}`'
+                    handle_error(error_message)
+                handle_error(logs[0])
+            message = json.loads(job.stdout.decode())
+            assert len(message.keys()) == 2, 'message should have only two keys, `type` and a second one'
+            key = [key for key in message.keys() if key != 'type'][0]
+            return message[key]
 
+    def init_config(self):
+        print_info('Getting airbyte connector spec')
+        spec = self.run('spec')
+        print_info('Generating config file')
+        yaml_config = airbyte_utils.generate_connection_yaml_config_sample(spec)
+        with open(self.config_file, 'w', encoding='utf-8') as out:
+            out.write(yaml_config)
+        print_success(f'Config file as been successfully written at `{self.config_file}`')
+        print_warning('PLEASE make desired changes to this configuration file before running connector!')
 
-def generate_airbyte_source_config_sample(airbyte_source, python_exe=None):
-    python_exe = python_exe or 'python'
-    package_name = airbyte_source.replace("-", "_")
-    class_name = airbyte_source.replace('-', ' ').title().replace(' ', '')
-    python_command = '; '.join([
-        f'import {package_name}',
-        f'import logging',
-        f'print({package_name}.{class_name}().spec(logging.getLogger()).json())',
-    ])
-    spec = subprocess.check_output([python_exe, '-c', python_command])
-    spec = json.loads(spec.decode())
-    return airbyte_utils.generate_connection_yaml_config_sample(spec)
+    @property
+    def config(self):
+        if not os.path.exists(self.config_file):
+            print_info('Config file does not exist --> creating it')
+            self.init_config()
+        return yaml.load(open(self.config_file, encoding='utf-8'), Loader=yaml.loader.SafeLoader)
+
+    @property
+    def spec(self):
+        return self.run('spec')
+
+    @property
+    def catalog(self):
+        return self.run('discover')
