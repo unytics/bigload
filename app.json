@@ -1,0 +1,42 @@
+{
+    "name": "foo-app",
+    "env": {
+        "BACKGROUND_COLOR": {
+            "description": "specify a css color",
+            "value": "#fefefe",
+            "required": false
+        },
+        "TITLE": {
+            "description": "title for your site"
+        },
+        "APP_SECRET": {
+            "generator": "secret"
+        },
+        "ORDERED_ENV": {
+            "description": "control the order env variables are prompted",
+            "order": 100
+        }
+    },
+    "options": {
+        "allow-unauthenticated": false,
+        "memory": "512Mi",
+        "cpu": "1",
+        "port": 80,
+        "http2": false,
+        "concurrency": 80,
+        "max-instances": 10
+    },
+    "build": {
+        "skip": true,
+        "buildpacks": {
+            "builder": "some/builderimage"
+        }
+    },
+    "hooks": {
+        "prebuild": {
+            "commands": [
+                "nano foo.config  && cat foo.config"
+            ]
+        }
+    }
+}
