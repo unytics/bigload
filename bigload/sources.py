@@ -11,6 +11,7 @@ import platform
 import pathlib
 import venv
 import shutil
+import sys
 
 import yaml
 import airbyte_cdk.models
@@ -32,6 +33,7 @@ def create_virtual_env(virtual_env_folder):
 
 
 def download_airbyte_code_from_github(airbyte_release='master'):
+    print_info(f'Downloading airbyte GitHub repo as a zip archive')
     url = f'https://github.com/airbytehq/airbyte/zipball/{airbyte_release}'
     resp = urllib.request.urlopen(url)
     return zipfile.ZipFile(io.BytesIO(resp.read()))
@@ -39,6 +41,7 @@ def download_airbyte_code_from_github(airbyte_release='master'):
 
 def list_python_airbyte_sources(airbyte_release='master'):
     airbyte_archive = download_airbyte_code_from_github(airbyte_release=airbyte_release)
+    print_info('Listing connectors in airbyte code starting with `source-` and having a `setup.py` file')
     pattern = r'airbyte-integrations/connectors/source-([\w-]+)/setup.py'
     return [
         'source-' + re.findall(pattern, path)[0]
@@ -52,7 +55,7 @@ def check_airbyte_source_exists_and_is_a_python_connector(airbyte_source, airbyt
     try:
         urllib.request.urlopen(url)
     except:
-        handle_error(f'Airbyte source `{airbyte_source}` could not be found on Airbyte GitHub repo for release {airbyte_release}. To get the full list of available airbyte sources please run `bigloader list-source-connectors`')
+        handle_error(f'Airbyte source `{airbyte_source}` could not be found on Airbyte GitHub repo for release {airbyte_release}. To get the full list of available airbyte sources please run `bigloader list`')
     return True
 
 
@@ -67,7 +70,7 @@ class AirbyteSource:
         self.config_file = f'{self.folder}/bigloader_config.yaml'
 
     def download(self, airbyte_release='master'):
-        print_info(f'Downloading airbyte GitHub repo as a zip archive')
+        check_airbyte_source_exists_and_is_a_python_connector(self.name, airbyte_release=airbyte_release)
         airbyte_archive = download_airbyte_code_from_github(airbyte_release)
         connector_path = f'airbyte-integrations/connectors/{self.name}/'
         connector_folder = next(path for path in airbyte_archive.namelist() if path.endswith(connector_path))
@@ -108,9 +111,14 @@ class AirbyteSource:
                 filename = f'{temp_dir}/catalog.json'
                 json.dump(catalog, open(filename, 'w', encoding='utf-8'))
                 command += f' --catalog {filename}'
-            process = subprocess.Popen(command, stdout=subprocess.PIPE)
+            print_command(command)
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             for line in iter(process.stdout.readline, b""):
-                message = airbyte_cdk.models.AirbyteMessage.parse_raw(line)
+                try:
+                    message = airbyte_cdk.models.AirbyteMessage.parse_raw(line)
+                except:
+                    print_info(line.decode().strip())
+                    continue
                 if (message.type == airbyte_cdk.models.Type.LOG) and print_log:
                     print_info(message.log.json(exclude_unset=True))
                 elif message.type == airbyte_cdk.models.Type.TRACE:
@@ -118,13 +126,24 @@ class AirbyteSource:
                 else:
                     yield message
 
+    def run_and_return_first_message(self, command):
+        messages = self.run(command)
+        try:
+            return next(messages)
+        except:
+            handle_error(f'Failed to get `{command}`: no message returned')
+
     def init_config(self):
         if os.path.exists(self.config_file):
             print_warning(f'Airbyte connector configuration file `{self.config_file}` already exists')
             print_info(f'If you wish to reset it, remove it and restart this command')
             return
         print_info('Generating config file')
-        yaml_config = airbyte_utils.generate_connection_yaml_config_sample(self.spec)
+        try:
+            spec = self.spec
+        except:
+            handle_error('Could not instanciate connector and get spec')
+        yaml_config = airbyte_utils.generate_connection_yaml_config_sample(spec)
         with open(self.config_file, 'w', encoding='utf-8') as out:
             out.write(yaml_config)
         print_success(f'Config file as been successfully written at `{self.config_file}`')
@@ -132,18 +151,20 @@ class AirbyteSource:
 
     @property
     def config(self):
+        if not os.path.exists(self.folder):
+            handle_error(f'Connector does nos exists: could not find folder `{self.folder}`. Download connector from Airbyte Github with command `bigloader get {self.name}` or create an airbyte connector yourself in that folder')
+        if not os.path.exists(self.config_file):
+            handle_error(f'Missing config file {self.config_file}. Generate one with `bigloader install {self.name}` command')
         return yaml.load(open(self.config_file, encoding='utf-8'), Loader=yaml.loader.SafeLoader)['configuration']
 
     @property
     def spec(self):
-        messages = self.run('spec')
-        message = next(messages)
+        message = self.run_and_return_first_message('spec')
         return message.spec.dict(exclude_unset=True)
 
     @property
     def catalog(self):
-        messages = self.run('discover')
-        message = next(messages)
+        message = self.run_and_return_first_message('discover')
         return json.loads(message.catalog.json(exclude_unset=True))
 
     @property
@@ -165,6 +186,5 @@ class AirbyteSource:
         return [stream['name'] for stream in self.catalog['streams']]
 
     def check(self):
-        messages = self.run('check')
-        message = next(messages)
+        message = self.run_and_return_first_message('check')
         return message.connectionStatus.dict(exclude_unset=True)
