@@ -6,7 +6,6 @@ import urllib.request
 import tempfile
 import os
 import subprocess
-import sys
 import json
 import platform
 import pathlib
@@ -14,49 +13,16 @@ import venv
 import shutil
 
 import yaml
-import click
 import airbyte_cdk.models
 
 from . import airbyte_utils
+from .utils import print_success, print_info, print_command, print_warning, handle_error
 
 
 AIRBYTE_CONNECTORS_FOLDER = 'airbyte_connectors'
 VIRTUAL_ENVS_FOLDER = '.venv'
 PYTHON_FOLDER = {'Linux': 'bin', 'Darwin': 'bin', 'Windows': 'Scripts'}[platform.system()]
 
-
-
-
-def print_color(msg):
-    click.echo(click.style(msg, fg='cyan'))
-
-
-def print_success(msg):
-    click.echo(click.style(f'SUCCESS: {msg}', fg='green'))
-
-
-def print_info(msg):
-    click.echo(click.style(f'INFO: {msg}', fg='yellow'))
-
-
-def print_command(msg):
-    click.echo(click.style(f'RUNNING: `{msg}`', fg='magenta'))
-
-
-def print_warning(msg):
-    click.echo(click.style(f'WARNING: {msg}', fg='cyan'))
-
-
-def handle_error(msg):
-    click.echo(click.style(f'ERROR: {msg}', fg='red'))
-    sys.exit()
-
-
-def to_camelcase(snake_case_string):
-    return ''.join(
-        word.title() if k != 0 else word
-        for k, word in enumerate(snake_case_string.split('_'))
-    )
 
 def create_virtual_env(virtual_env_folder):
     print_info(f'Creating virtual env at {virtual_env_folder}')
@@ -142,8 +108,8 @@ class AirbyteSource:
                 filename = f'{temp_dir}/catalog.json'
                 json.dump(catalog, open(filename, 'w', encoding='utf-8'))
                 command += f' --catalog {filename}'
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, encoding='utf-8')
-            for line in iter(process.stdout.readline, ""):
+            process = subprocess.Popen(command, stdout=subprocess.PIPE)
+            for line in iter(process.stdout.readline, b""):
                 message = airbyte_cdk.models.AirbyteMessage.parse_raw(line)
                 if (message.type == airbyte_cdk.models.Type.LOG) and print_log:
                     print_info(message.log.json(exclude_unset=True))

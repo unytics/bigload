@@ -1,7 +1,11 @@
 import os
 import json
+import inspect
 
 import airbyte_cdk
+
+from .utils import print_info
+
 
 
 def create_file_or_try_to_open(filename):
@@ -24,27 +28,48 @@ def get_latest_line_of_file(filename):
 
 class BaseDestination:
 
-    def __init__(self, destination, streams):
-        self.destination = destination
-        self.streams = streams
+    def __init__(self, catalog):
+        self.catalog = catalog
+        self.streams = [s['stream']['name'] for s in catalog['streams']]
 
     def get_state(self):
+        raise NotImplementedError()
+
+    def get_logs(self):
         raise NotImplementedError()
 
     def run(self, messages):
         raise NotImplementedError()
 
+    @classmethod
+    def get_class_name(cls):
+        return cls.__name__.lower().replace('destination', '')
+
+    @classmethod
+    def get_init_help(cls):
+        args = inspect.getfullargspec(cls.__init__).args
+        args = ', '.join([arg.upper() for arg in args if arg not in ['self', 'catalog']])
+        return f'{cls.get_class_name()}({args})'
+
+
+class PrintDestination(BaseDestination):
+
+    def run(self, messages):
+        for message in messages:
+            print(message.json(exclude_unset=True))
+
 
 class LocalJsonDestination(BaseDestination):
 
-    def __init__(self, destination, streams):
-        super().__init__(destination, streams)
-        self.states_file = f'{destination}/states.jsonl'
-        self.logs_file = f'{destination}/logs.jsonl'
-        self.stream_file = lambda stream: f'{destination}/{stream}.jsonl'
+    def __init__(self, catalog, folder):
+        super().__init__(catalog)
+        os.makedirs(folder, exist_ok=True)
+        self.states_file = f'{folder}/states.jsonl'
+        self.logs_file = f'{folder}/logs.jsonl'
+        self.stream_file = lambda stream: f'{folder}/{stream}.jsonl'
         create_file_or_try_to_open(self.states_file)
         create_file_or_try_to_open(self.logs_file)
-        for stream in streams:
+        for stream in self.streams:
             create_file_or_try_to_open(self.stream_file(stream))
 
     def get_state(self):
@@ -66,7 +91,7 @@ class LocalJsonDestination(BaseDestination):
             for message in messages:
                 if message.type == airbyte_cdk.models.Type.LOG:
                     message = message.log.json(exclude_unset=True)
-                    print(message)
+                    print_info(message)
                     logs_file.write(message + '\n')
                 elif message.type == airbyte_cdk.models.Type.RECORD:
                     file = streams_files[message.record.stream]
@@ -79,3 +104,17 @@ class LocalJsonDestination(BaseDestination):
             logs_file.close()
             for stream_file in streams_files.values():
                 stream_file.close()
+
+
+DESTINATIONS = {
+    destination.get_class_name(): destination
+    for destination in [LocalJsonDestination, PrintDestination]
+}
+
+
+def create_destination(destination_arg, catalog):
+    destination, args = destination_arg.split('(')
+    args = args.replace(')', '').split(',')
+    args = [arg.strip() for arg in args if arg.strip()]
+    Destination = DESTINATIONS[destination]
+    return Destination(catalog, *args)

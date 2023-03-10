@@ -39,26 +39,40 @@ def get(airbyte_connector, airbyte_release):
 @click.argument('airbyte_connector')
 def install(airbyte_connector):
     '''
-    Install connector located at `airbyte_connectors/{airbyte_connector}` with pip
+    Install local `airbyte_connector` located at `airbyte_connectors/{airbyte_connector}` with pip
     '''
     source = AirbyteSource(airbyte_connector)
     source.install()
     source.init_config()
 
 
+def add_destinations_doc(function):
+    destinations_doc = '\n    '.join([f'• {destination.get_init_help()}' for destination in destinations.DESTINATIONS.values()])
+    function.__doc__ = function.__doc__.format(ACCEPTED_DESTINATIONS=destinations_doc)
+    return function
+
 
 @cli.command()
 @click.argument('airbyte_connector')
-def run(airbyte_connector):
+@click.option('--destination', default='print()', help='extracted data destination')
+@add_destinations_doc
+def run(airbyte_connector, destination):
     '''
-    Install `airbyte_connector` located `airbyte_connectors` folder with pip
+    Run `airbyte_connector` extract job
+
+    If `--destination` is provided, extracted data will be streamed to destination, else data will be printed on console.
+
+    \b
+    Accepted `--destination` values are:
+    {ACCEPTED_DESTINATIONS}
+
+    (PLEASE replace uppercase variables such as FOLDER with values in the above destinations)
     '''
-    # AirbyteSource(airbyte_connector).init_config()
     source = AirbyteSource(airbyte_connector)
-    streams = source.streams
     catalog = source.configured_catalog
-    destination = destinations.LocalJsonDestination('test', streams)
+    destination = destinations.create_destination(destination, catalog)
     messages = source.run('read', catalog=catalog, print_log=False)
     destination.run(messages)
+
 
 
