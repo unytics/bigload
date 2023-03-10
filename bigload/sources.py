@@ -118,7 +118,7 @@ class AirbyteSource:
 
     def install(self):
         if os.path.exists(self.virtualenv_folder):
-            print_info(f'Airbyte connector is already installed')
+            print_warning('Airbyte connector is already installed')
             print_info(f'If you wish to reinstall it, remove the folder `{self.virtualenv_folder}` and restart this command')
             return
         create_virtual_env(self.virtualenv_folder)
@@ -153,6 +153,10 @@ class AirbyteSource:
                     yield message
 
     def init_config(self):
+        if os.path.exists(self.config_file):
+            print_warning(f'Airbyte connector configuration file `{self.config_file}` already exists')
+            print_info(f'If you wish to reset it, remove it and restart this command')
+            return
         print_info('Generating config file')
         yaml_config = airbyte_utils.generate_connection_yaml_config_sample(self.spec)
         with open(self.config_file, 'w', encoding='utf-8') as out:

@@ -35,14 +35,6 @@ class BaseDestination:
         raise NotImplementedError()
 
 
-
-class PrintDestination(BaseDestination):
-
-    def run(self, messages):
-        for message in messages:
-            print(message)
-
-
 class LocalJsonDestination(BaseDestination):
 
     def __init__(self, destination, streams):
@@ -73,7 +65,9 @@ class LocalJsonDestination(BaseDestination):
         try:
             for message in messages:
                 if message.type == airbyte_cdk.models.Type.LOG:
-                    logs_file.write(message.log.json(exclude_unset=True) + '\n')
+                    message = message.log.json(exclude_unset=True)
+                    print(message)
+                    logs_file.write(message + '\n')
                 elif message.type == airbyte_cdk.models.Type.RECORD:
                     file = streams_files[message.record.stream]
                     row = json.dumps(message.record.data)
