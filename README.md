@@ -1,5 +1,7 @@
 # bigloader
 
+[![Run on Google Cloud](https://deploy.cloud.run/button.svg)](https://deploy.cloud.run)
+
 ## Features
 
 - Config pre-generated as yaml (or UI?)
@@ -11,3 +13,6 @@ _airbyte_raw_
 # Print when writing files to destination!!
 # Print_info in utils to be used by destination
 # print_airbyte_log function!
+# Delete connector!
+# Get Logs
+# Download should remove venv to!

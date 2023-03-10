@@ -26,7 +26,7 @@ def list():
 
 @cli.command()
 @click.argument('airbyte_connector')
-@click.option('--airbyte_release', default='v0.40.30', help='defaults to `v0.40.30` (explore airbyte releases at https://github.com/airbytehq/airbyte/releases)')
+@click.option('--airbyte_release', default='master', help='Example: `v0.40.30`. Defaults to `master` (explore airbyte releases at https://github.com/airbytehq/airbyte/releases)')
 def get(airbyte_connector, airbyte_release):
     '''
     Download `airbyte_connector` code from AirByte GitHub repo into local `airbyte_connectors` folder.

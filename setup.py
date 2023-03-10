@@ -2,7 +2,7 @@ from setuptools import setup
 
 
 setup(
-    name='bigload',
+    name='bigloader',
     version='0.1.0',
     packages=['.'],
     include_package_data=False,
@@ -15,7 +15,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'bigload = bigload.cli:cli',
+            'bigloader = bigloader.cli:cli',
         ],
     },
 )
