@@ -112,7 +112,7 @@ class AirbyteSource:
                 json.dump(catalog, open(filename, 'w', encoding='utf-8'))
                 command += f' --catalog {filename}'
             print_command(command)
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True)
             for line in iter(process.stdout.readline, b""):
                 try:
                     message = airbyte_cdk.models.AirbyteMessage.parse_raw(line)

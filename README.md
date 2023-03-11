@@ -16,3 +16,9 @@ _airbyte_raw_
 # Delete connector!
 # Get Logs
 # Download should remove venv to!
+
+gcloud builds submit . --tag eu.gcr.io/compte-nickel-datastg/bigloader-source-pypi:latest
+
+gcloud beta run jobs create bigloader-source-pypi --image eu.gcr.io/compte-nickel-datastg/bigloader-source-pypi:latest --region europe-west1
+
+gcloud beta run jobs execute bigloader-source-pypi --region europe-west1
