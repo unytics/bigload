@@ -1,6 +1,8 @@
 import os
 import json
 import inspect
+import datetime
+import uuid
 
 import airbyte_cdk
 
@@ -112,100 +114,93 @@ class LocalJsonDestination(BaseDestination):
 
 class BigQueryDestination(BaseDestination):
 
-    def __init__(self, catalog, dataset, buffer_size_max=1000):
+    def __init__(self, catalog, dataset, buffer_size_max=10000):
+        super().__init__(catalog)
+        self.dataset = dataset
         self.buffer_size_max = buffer_size_max
+        self.tables = {
+            **{
+                'airbyte_logs': '_airbyte_logs',
+                'airbyte_states': '_airbyte_states',
+            },
+            **{
+                stream: f'_airbyte_raw_{stream}'
+                for stream in self.streams
+            },
+        }
+        create_table_query = '''
+            create table if not exists `{dataset}.{table}` (
+                _airbyte_ab_id string options(description="Record uuid generated at insertion into BigQuery"),
+                _airbyte_job_started_at timestamp options(description="Extract-load job start timestamp"),
+                _airbyte_slice_started_at timestamp options(description="When incremental mode is used, data records are emitted by chunks a.k.a. slices. At the end of each slice, a state record is emitted to store a checkpoint. This column stores the timestamp when the slice started"),
+                _airbyte_emitted_at timestamp options(description="Record ingestion time into BigQuery"),
+                _airbyte_data string options(description="Record data as json string")
+            )
+            partition by date(_airbyte_emitted_at)
+            options(
+                description="{table} records ingested by bigloader"
+            )
+        '''
         import google.cloud.bigquery
         self.bigquery = google.cloud.bigquery.Client()
-        self.stream_table = lambda stream: config['table'].format(stream='_' + stream) if stream else None
-        self.logs_table = config['table'].format(stream='_logs')
-        self.states_table = config['table'].format(stream='_states')
-        print(streams)
-        for stream in streams:
-            self.bigquery.query(f'''
-                create table if not exists {self.stream_table(stream)} (
-                    job_started_at timestamp,
-                    slice_started_at timestamp,
-                    inserted_at timestamp,
-                    data string
-                )
-            ''').result()
-        self.bigquery.query(f'''
-            create table if not exists {self.logs_table} (
-                job_started_at timestamp,
-                slice_started_at timestamp,
-                inserted_at timestamp,
-                level string,
-                data string
-            )
-        ''').result()
-        self.bigquery.query(f'''
-            create table if not exists {self.states_table} (
-                job_started_at timestamp,
-                slice_started_at timestamp,
-                inserted_at timestamp,
-                state string
-            )
-        ''').result()
-        super().__init__(config)
+        for table in self.tables.values():
+            self.bigquery.query(create_table_query.format(dataset=dataset, table=table)).result()
 
-    def insert_rows(self, table, rows):
-        if not rows:
+    def insert_rows(self, table, records):
+        if not records:
             return
+        table = f'{self.dataset}.{table}'
         now  = datetime.datetime.utcnow().isoformat()
-        rows = [
+        records = [
             {
-                **row,
-                **{
-                    'inserted_at': now,
-                    'job_started_at': self.job_started_at,
-                    'slice_started_at': self.slice_started_at,
-                }
+                '_airbyte_ab_id': str(uuid.uuid4()),
+                '_airbyte_job_started_at': self.job_started_at,
+                '_airbyte_slice_started_at': self.slice_started_at,
+                '_airbyte_emitted_at': now,
+                '_airbyte_data': record,
             }
-            for row in rows
+            for record in records
         ]
-        errors = self.bigquery.insert_rows_json(table, rows)
+        errors = self.bigquery.insert_rows_json(table, records)
         if errors:
             raise ValueError(f'Could not insert rows to BigQuery table {table}. Errors: {errors}')
 
-    def handle_messages(self, messages):
-        self.slice_started_at = datetime.datetime.utcnow().isoformat()
+    def run(self, messages):
+        self.job_started_at = datetime.datetime.utcnow().isoformat()
+        self.slice_started_at = self.job_started_at
         buffer = []
         stream_table = None
         for message in messages:
-            message = json.loads(message)
-            if message['type'] == 'RECORD':
-                new_stream_table = self.stream_table(message['record']['stream'])
-                if new_stream_table != stream_table:
+            if message.type == airbyte_cdk.models.Type.RECORD:
+                new_stream_table = self.tables[message.record.stream]
+                if new_stream_table != stream_table and stream_table is not None:
                     self.insert_rows(stream_table, buffer)
                     buffer = []
                     self.slice_started_at = datetime.datetime.utcnow().isoformat()
                 stream_table = new_stream_table
-                buffer.append({'data': json.dumps(message['record']['data'])})
+                buffer.append(json.dumps(message.record.data))
                 if len(buffer) > self.buffer_size_max:
                     self.insert_rows(stream_table, buffer)
                     buffer = []
-            elif message['type'] == 'STATE':
+            elif message.type == airbyte_cdk.models.Type.STATE:
                 self.insert_rows(stream_table, buffer)
                 buffer = []
-                self.insert_rows(self.states_table, [{'state': json.dumps(message['state'])}])
+                self.insert_rows(self.tables['airbyte_states'], [message.state.json(exclude_unset=True)])
                 self.slice_started_at = datetime.datetime.utcnow().isoformat()
-            elif message['type'] == 'LOG':
-                level = logging.getLevelName(message['log']['level'])
-                message = message['log']['message']
-                logger.log(level, message)
+            elif message.type == airbyte_cdk.models.Type.LOG:
+                message = message.log.json(exclude_unset=True)
+                print_info(message)
+                self.insert_rows(self.tables['airbyte_logs'], [message])
             else:
-                raise NotImplementedError(f'message type {message["type"]} is not managed yet')
+                raise NotImplementedError(f'message type {message.type} is not managed yet')
         self.insert_rows(stream_table, buffer)
-
-    def handle_log_message(self, level, message):
-        self.insert_rows(self.logs_table, [{'level': level, 'data': message}])
 
     def get_state(self):
         rows = self.bigquery.query(f'''
-        select json_extract(state, '$.data') as state
-        from {self.states_table}
-        order by inserted_at desc
-        limit 1
+            select json_extract(data, '$.data') as state
+            from {self.tables['airbyte_state']}
+            order by _airbyte_emitted_at desc
+            limit 1
         ''').result()
         rows = list(rows)
         return json.loads(rows[0].state) if rows else {}

@@ -100,6 +100,8 @@ class AirbyteSource:
         print_success(f'Successfully installed python package located at {self.folder}')
 
     def run(self, args, print_log=True, catalog=None):
+        if not os.path.exists(os.path.dirname(self.python_exe)):
+            handle_error(f'Connector is not installed. Install it with `bigloader install {self.name}`')
         with tempfile.TemporaryDirectory() as temp_dir:
             command = f'{self.python_command} {args}'
             needs_config = 'spec' not in args

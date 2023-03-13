@@ -12,6 +12,7 @@ setup(
         'jinja2',
         'pyyaml',
         'airbyte-cdk',
+        'google-cloud-bigquery',
     ],
     entry_points={
         'console_scripts': [
